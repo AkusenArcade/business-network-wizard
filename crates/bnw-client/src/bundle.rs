@@ -163,3 +163,142 @@ pub fn apply_action(b: &Bundle, domain_user: Option<String>) -> bnw_core::action
 /// Cosa resta da fare dopo l'importazione.
 pub const AFTER_IMPORT: &str = "Le password non sono nel profilo: aggiornale dalla pagina Password (o con \
 «bnw password»). Le stampanti che non rispondono si aggiungono rilanciando dalla rete aziendale.";
+
+/// Un profilo vuoto da compilare a mano.
+pub fn empty() -> Bundle {
+    use bnw_core::profile::{Company, Proxy};
+    Bundle {
+        profile: Profile {
+            company: Company {
+                name: String::new(),
+                domain: String::new(),
+                user_hint: None,
+            },
+            proxy: Proxy {
+                upstream: Vec::new(),
+                local_port: 8118,
+                cntlm_port: 3128,
+                direct: [
+                    "localhost",
+                    "127.0.0.0/8",
+                    "10.0.0.0/8",
+                    "172.16.0.0/12",
+                    "192.168.0.0/16",
+                ]
+                .iter()
+                .map(|h| bnw_core::profile::DirectRule::Host(h.to_string()))
+                .collect(),
+                browsers: vec![bnw_core::profile::Browser::Firefox],
+                pac: None,
+                check_url: None,
+            },
+            vpn: None,
+            wifi: None,
+            shares: Vec::new(),
+            printers: Vec::new(),
+        },
+        files: BTreeMap::new(),
+    }
+}
+
+/// Il profilo applicato su questa macchina, con l'`.ovpn` e la CA trovati come fa
+/// l'esportazione (quelli che non si trovano restano da scegliere).
+pub fn from_installed(env: &crate::Env, home: &Path) -> Option<Bundle> {
+    let profile = crate::status::installed_profile(env)?;
+    let mut files = BTreeMap::new();
+    if let (Some(v), Some(path)) = (&profile.vpn, detect_ovpn(&profile, home))
+        && let Ok(d) = std::fs::read(path)
+    {
+        files.insert(v.file.clone(), d);
+    }
+    if let (Some(w), Some(path)) = (&profile.wifi, detect_ca(&profile))
+        && let Ok(d) = std::fs::read(path)
+    {
+        files.insert(w.ca.clone(), d);
+    }
+    Some(Bundle { profile, files })
+}
+
+/// Allinea l'archivio al profilo: l'`.ovpn` in `vpn/<nome>.ovpn`, la CA in
+/// `wifi/ca.pem`, il fingerprint della CA ricalcolato dal file, e via i file che il
+/// profilo non cita più (per esempio dopo aver tolto la VPN).
+pub fn normalize(mut b: Bundle) -> Bundle {
+    let take = |files: &mut BTreeMap<String, Vec<u8>>, current: Option<&str>, suffix: &str| {
+        current.and_then(|c| files.remove(c)).or_else(|| {
+            let key = files.keys().find(|k| k.ends_with(suffix)).cloned()?;
+            files.remove(&key)
+        })
+    };
+    let mut out = BTreeMap::new();
+    if let Some(v) = b.profile.vpn.as_mut() {
+        let data = take(&mut b.files, Some(&v.file), ".ovpn");
+        v.file = format!("vpn/{}.ovpn", v.name.replace('/', "-"));
+        if let Some(d) = data {
+            out.insert(v.file.clone(), d);
+        }
+    }
+    if let Some(w) = b.profile.wifi.as_mut() {
+        let data = take(&mut b.files, Some(&w.ca), ".pem");
+        w.ca = "wifi/ca.pem".into();
+        if let Some(d) = data {
+            if let Some(fp) = pem_sha1(&d) {
+                w.ca_sha1 = Some(fp);
+            }
+            out.insert(w.ca.clone(), d);
+        }
+    }
+    b.files = out;
+    b
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bnw_core::profile::{Vpn, Wifi};
+
+    const CA: &str = "-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----\n";
+
+    #[test]
+    fn normalizza_file_e_fingerprint() {
+        let mut b = empty();
+        b.profile.vpn = Some(Vpn {
+            name: "Nuova".into(),
+            file: "vecchio/x.ovpn".into(),
+            full_tunnel: true,
+        });
+        b.profile.wifi = Some(Wifi {
+            name: "W".into(),
+            ssid: "W".into(),
+            eap: Default::default(),
+            phase2: Default::default(),
+            ca: "altro.pem".into(),
+            ca_sha1: Some("00".into()),
+            domain_suffix_match: "dc.x".into(),
+            autoconnect: false,
+        });
+        b.files.insert("vecchio/x.ovpn".into(), b"client".to_vec());
+        b.files.insert("altro.pem".into(), CA.as_bytes().to_vec());
+        b.files.insert("orfano.txt".into(), b"x".to_vec());
+        let n = normalize(b);
+        assert_eq!(n.profile.vpn.as_ref().unwrap().file, "vpn/Nuova.ovpn");
+        assert_eq!(
+            n.files.keys().collect::<Vec<_>>(),
+            ["vpn/Nuova.ovpn", "wifi/ca.pem"]
+        );
+        assert_eq!(n.profile.wifi.as_ref().unwrap().ca_sha1, pem_sha1(CA.as_bytes()));
+        // tolta la VPN, via anche il suo file
+        let mut n2 = n.clone();
+        n2.profile.vpn = None;
+        assert_eq!(normalize(n2).files.keys().collect::<Vec<_>>(), ["wifi/ca.pem"]);
+    }
+
+    #[test]
+    fn profilo_vuoto_non_valido_finche_non_si_compila() {
+        let mut b = empty();
+        assert!(bnw_core::validate::profile(&b.profile).is_err());
+        b.profile.company.name = "Esempio".into();
+        b.profile.company.domain = "ESEMPIO".into();
+        b.profile.proxy.upstream.push("10.20.30.40:8080".into());
+        assert!(bnw_core::validate::profile(&b.profile).is_ok());
+    }
+}

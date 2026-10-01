@@ -5,6 +5,7 @@ mod app;
 mod bundle_ui;
 mod connections_page;
 mod password_page;
+mod profile_editor;
 mod proxy_page;
 mod resources_page;
 mod status_page;

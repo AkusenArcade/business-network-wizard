@@ -116,6 +116,12 @@ dimensioni limitate, fingerprint della CA, avviso se la CA del WiFi è quella de
 l'`.ovpn` non ha la chiave privata. Per ora l'importazione applica il proxy; VPN, WiFi, dischi
 e stampanti arriveranno con le fasi 5 e 6.
 
+**Editor (v0.8.0)**: menu ☰ → «Modifica profilo aziendale…». Si parte dal profilo applicato,
+da un `.bnw` o da zero; si modifica tutto (azienda, proxy ed eccezioni, VPN con il suo
+`.ovpn`, WiFi con la CA, dischi, stampanti) con la validazione in tempo reale, e si salva
+come `.bnw` cifrato oppure si applica a questa macchina («applica profilo», che toglie
+quello che il profilo nuovo non ha più). È lo strumento per un cambio di dominio.
+
 Il `[[printer]]` del profilo:
 
 ```toml

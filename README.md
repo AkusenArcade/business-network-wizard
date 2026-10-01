@@ -35,6 +35,9 @@ offline-bundle FILE.tar`) produce un archivio con i pacchetti e uno script `inst
 
 Da terminale: `bnw setup azienda.bnw`.
 
+Per preparare un profilo nuovo (per esempio quando l'azienda cambia dominio): menu ☰ →
+«Modifica profilo aziendale…», poi «Salva come .bnw…» o «Applica a questa macchina…».
+
 Una macchina configurata a mano con gli script del kit precedente si **adotta** senza
 cambiarne il comportamento: banner «Adotta…» o `bnw adopt profile.toml`.
 

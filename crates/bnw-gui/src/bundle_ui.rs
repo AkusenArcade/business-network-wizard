@@ -29,6 +29,10 @@ pub fn install(app: &Rc<App>, header: &adw::HeaderBar) {
     app.window.add_action(&export);
     app.window.add_action(&import);
     app.window.add_action(&setup);
+    let edit = gio::SimpleAction::new("edit-profile", None);
+    let a = app.clone();
+    edit.connect_activate(move |_, _| crate::profile_editor::open(&a));
+    app.window.add_action(&edit);
     let offline = gio::SimpleAction::new("offline-bundle", None);
     let a = app.clone();
     offline.connect_activate(move |_, _| {
@@ -38,6 +42,7 @@ pub fn install(app: &Rc<App>, header: &adw::HeaderBar) {
 
     let menu = gio::Menu::new();
     menu.append(Some("Configura da un profilo…"), Some("win.setup"));
+    menu.append(Some("Modifica profilo aziendale…"), Some("win.edit-profile"));
     menu.append(Some("Esporta profilo aziendale…"), Some("win.export-profile"));
     menu.append(Some("Importa profilo aziendale…"), Some("win.import-profile"));
     menu.append(Some("Prepara installazione offline…"), Some("win.offline-bundle"));
