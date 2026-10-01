@@ -1,0 +1,13 @@
+[Unit]
+Description=Share aziendale //fs2.corp.esempio/PROGETTI
+# Raggiungibile solo con la VPN Esempio attiva.
+After=network-online.target
+Wants=network-online.target
+
+[Mount]
+What=//fs2.corp.esempio/PROGETTI
+Where=/mnt/progetti
+Type=cifs
+Options=credentials=/etc/samba/credentials/esempio,uid=1000,gid=1000,file_mode=0644,dir_mode=0755,iocharset=utf8,mfsymlinks,nofail,_netdev,soft
+# Senza VPN il server non risponde: fallisci in fretta invece di bloccare chi legge la cartella.
+TimeoutSec=20

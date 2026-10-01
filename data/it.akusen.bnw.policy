@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Business Network Wizard</vendor>
+  <icon_name>network-workgroup</icon_name>
+
+  <!-- Un'unica azione: le operazioni ammesse le decide bnw-helper, che accetta solo
+       le proprie azioni JSON con parametri validati. auth_admin_keep: una password
+       di amministratore per sessione (qualche minuto). -->
+  <action id="it.akusen.bnw.helper">
+    <description>Configure the company network</description>
+    <description xml:lang="it">Configurare la rete aziendale</description>
+    <message>Authentication is required to configure the company network (proxy, VPN, WiFi, network drives, printers)</message>
+    <message xml:lang="it">Serve l'autenticazione per configurare la rete aziendale (proxy, VPN, WiFi, dischi di rete, stampanti)</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/bnw/bnw-helper</annotate>
+  </action>
+</policyconfig>

@@ -1,0 +1,9 @@
+[Unit]
+Description=Automount della share aziendale //fs1.corp.esempio/SCAMBIO
+
+[Automount]
+Where=/mnt/scambio
+TimeoutIdleSec=600
+
+[Install]
+WantedBy=multi-user.target

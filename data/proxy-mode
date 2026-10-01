@@ -1,0 +1,21 @@
+#!/bin/sh
+# proxy-mode on|off|auto|status -- modalita di tinyproxy (Business Network Wizard)
+#   on/off  forzatura manuale: resta finche' non si fa "auto" o non si riavvia
+#   auto    toglie la forzatura e rileva la rete (VPN o WiFi/LAN aziendale)
+MANUAL=/run/proxy-mode.manual
+DETECT=/usr/lib/bnw/proxy-detect
+case "$1" in
+  on)   echo on  > "$MANUAL"
+        ln -sfn /etc/tinyproxy/upstream.conf /etc/tinyproxy/active.conf
+        systemctl start cntlm.service; systemctl restart tinyproxy ;;
+  off)  echo off > "$MANUAL"
+        ln -sfn /etc/tinyproxy/direct.conf   /etc/tinyproxy/active.conf
+        systemctl stop cntlm.service; systemctl restart tinyproxy ;;
+  auto) rm -f "$MANUAL"; exec "$DETECT" ;;
+  status|"")
+        printf 'modalita: %s\n' "$(basename "$(readlink -f /etc/tinyproxy/active.conf)" .conf)"
+        [ -e "$MANUAL" ] && printf 'forzata a mano (%s) - "sudo proxy-mode auto" per tornare automatico\n' "$(cat "$MANUAL")"
+        printf 'tinyproxy: %s   cntlm: %s\n' "$(systemctl is-active tinyproxy)" "$(systemctl is-active cntlm)"
+        "$DETECT" --dry-run ;;
+  *) echo "uso: proxy-mode on|off|auto|status" >&2; exit 1 ;;
+esac

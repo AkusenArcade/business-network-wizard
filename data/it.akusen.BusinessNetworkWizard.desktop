@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Business Network Wizard
+Name[it]=Rete aziendale
+Comment=Configure and maintain access to the company network
+Comment[it]=Configura e mantiene l'accesso alla rete aziendale: proxy, VPN, WiFi, dischi di rete
+Exec=bnw
+Icon=network-workgroup
+Terminal=false
+Categories=GTK;Settings;
+Keywords=proxy;vpn;cntlm;tinyproxy;ntlm;
+StartupNotify=true

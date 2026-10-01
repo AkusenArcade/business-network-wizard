@@ -1,0 +1,11 @@
+#!/bin/sh
+# Ad ogni cambio di rete riallinea tinyproxy alla rete corrente: aziendale (VPN
+# oppure WiFi/LAN aziendale) o no. La decisione sta in proxy-detect.
+# Installato da Business Network Wizard.
+case "$2" in
+  up|down|vpn-up|vpn-down|dhcp4-change|connectivity-change) ;;
+  *) exit 0 ;;
+esac
+# --no-block: il dispatcher di NetworkManager serializza gli hook e ha un timeout,
+# la sonda TCP puo' durare qualche secondo. Il lavoro va fatto fuori da qui.
+systemctl start --no-block bnw-proxy-detect.service

@@ -1,0 +1,7 @@
+[Unit]
+Description=Allinea tinyproxy/cntlm alla rete corrente (aziendale o no)
+After=NetworkManager.service tinyproxy.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/bnw/proxy-detect

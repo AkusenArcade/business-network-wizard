@@ -1,0 +1,7 @@
+Username        mario.rossi
+Domain          ESEMPIO
+Proxy           10.20.30.40:3128
+NoProxy         localhost, 127.0.0.*, 10.*, 172.16.*, 192.168.*, *.corp.esempio
+Listen          127.0.0.1:3128
+Auth            NTLMv2
+Gateway         no

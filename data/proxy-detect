@@ -1,0 +1,148 @@
+#!/bin/bash
+# proxy-detect - decide se la macchina e' sulla rete aziendale e allinea tinyproxy
+# (+ cntlm) di conseguenza. Installato da Business Network Wizard.
+#
+# La rete aziendale e' riconosciuta in due modi:
+#   1. la VPN aziendale e' attiva;
+#   2. il proxy aziendale risponde sulla porta TCP -> siamo sul WiFi/LAN aziendale.
+# Gli indirizzi da sondare sono le righe "Proxy" di /etc/cntlm.conf: cosi' la
+# rilevazione e' per costruzione allineata a dove cntlm inoltra davvero. Il nome
+# della VPN e i proxy di riserva stanno in /etc/bnw/proxy-detect.conf, generato
+# dall'app dal profilo aziendale.
+#
+# Uso:
+#   proxy-detect              rileva e applica (symlink + cntlm + restart tinyproxy)
+#   proxy-detect --symlink    rileva e sposta solo il symlink (per ExecStartPre)
+#   proxy-detect --dry-run    stampa la decisione senza toccare niente
+# Variabili utili nei test: PROXY_DETECT_IGNORE_VPN=1 salta il controllo VPN e
+# verifica solo la sonda TCP; BNW_TEST_ROOT (solo senza root) sposta i percorsi.
+
+set -u
+
+ROOT=""
+[ "$(id -u)" != 0 ] && ROOT=${BNW_TEST_ROOT-}
+
+CONF=$ROOT/etc/bnw/proxy-detect.conf
+CNTLM_CONF=$ROOT/etc/cntlm.conf
+ACTIVE=$ROOT/etc/tinyproxy/active.conf
+MANUAL=$ROOT/run/proxy-mode.manual
+LOCK=/run/proxy-detect.lock
+CONNECT_TIMEOUT=2
+TRIES=2
+RETRY_WAIT=2
+
+MODE=apply
+case "${1-}" in
+  --symlink) MODE=symlink ;;
+  --dry-run) MODE=dryrun ;;
+  "")        MODE=apply ;;
+  *) echo "uso: proxy-detect [--symlink|--dry-run]" >&2; exit 2 ;;
+esac
+
+if [ "$MODE" != dryrun ] && [ "$(id -u)" != 0 ]; then
+  echo "proxy-detect: serve root (usa: sudo proxy-mode auto)" >&2
+  exit 1
+fi
+
+log() {
+  logger -t proxy-detect -- "$*" 2>/dev/null
+  [ -t 1 ] && echo "$*"
+  return 0
+}
+
+# Configurazione: righe CHIAVE=valore, lette senza "source" (il valore non passa
+# mai dalla shell). PROXY puo' ripetersi.
+VPN_NAME=""
+FALLBACK_PROXY=""
+if [ -r "$CONF" ]; then
+  while IFS='=' read -r key value; do
+    case "$key" in
+      VPN_NAME) VPN_NAME=$value ;;
+      PROXY)    FALLBACK_PROXY="$FALLBACK_PROXY $value" ;;
+    esac
+  done < "$CONF"
+fi
+
+# Indirizzi proxy da sondare (solo le righe Proxy: il file contiene gli hash NTLM
+# e non viene mai stampato).
+candidates() {
+  local out=""
+  [ -r "$CNTLM_CONF" ] && out=$(awk 'tolower($1)=="proxy" && NF>=2 {print $2}' "$CNTLM_CONF")
+  [ -n "$out" ] || out=$FALLBACK_PROXY
+  printf '%s\n' $out
+}
+
+reachable() {
+  local hostport=$1 host port
+  host=${hostport%:*}; port=${hostport##*:}
+  [ "$host" = "$port" ] && port=3128
+  timeout "$CONNECT_TIMEOUT" bash -c 'exec 3<>"/dev/tcp/$0/$1"' "$host" "$port" 2>/dev/null
+}
+
+REASON=""
+detect() {   # 0 = rete aziendale, 1 = no
+  if [ -n "$VPN_NAME" ] && [ "${PROXY_DETECT_IGNORE_VPN-0}" != 1 ] \
+     && nmcli -t -f NAME connection show --active 2>/dev/null | grep -qxF -- "$VPN_NAME"; then
+    REASON="VPN $VPN_NAME attiva"
+    return 0
+  fi
+  local n=0 c
+  while [ "$n" -lt "$TRIES" ]; do
+    for c in $(candidates); do
+      if reachable "$c"; then
+        REASON="proxy aziendale $c raggiungibile (rete aziendale senza VPN)"
+        return 0
+      fi
+    done
+    n=$((n + 1))
+    [ "$n" -lt "$TRIES" ] && sleep "$RETRY_WAIT"
+  done
+  if [ -n "$VPN_NAME" ]; then
+    REASON="ne' VPN ne' proxy aziendale raggiungibili"
+  else
+    REASON="proxy aziendale non raggiungibile"
+  fi
+  return 1
+}
+
+if detect; then WANT=upstream; else WANT=direct; fi
+CURRENT=$(basename "$(readlink -f "$ACTIVE" 2>/dev/null)" .conf 2>/dev/null)
+
+if [ "$MODE" = dryrun ]; then
+  echo "rilevato:  $WANT  ($REASON)"
+  echo "attuale:   ${CURRENT:-sconosciuto}"
+  [ -e "$MANUAL" ] && echo "override manuale attivo ($(cat "$MANUAL" 2>/dev/null)): la rilevazione non verrebbe applicata"
+  exit 0
+fi
+
+# Forzatura manuale (proxy-mode on|off): vince finche' non si fa "proxy-mode auto"
+# o non si riavvia la macchina. E' la via di fuga se il proxy da' problemi.
+if [ -e "$MANUAL" ]; then
+  log "override manuale attivo ($(cat "$MANUAL" 2>/dev/null)): rilevazione ignorata ($REASON)"
+  exit 0
+fi
+
+ln -sfn "/etc/tinyproxy/$WANT.conf" "$ACTIVE"
+[ "$MODE" = symlink ] && exit 0   # chiamato dall'ExecStartPre: niente restart, sarebbe ricorsivo
+
+# Un solo proxy-detect per volta (l'ExecStartPre non prende il lock, altrimenti
+# il restart di tinyproxy qui sotto si bloccherebbe da solo).
+if : > "$LOCK" 2>/dev/null; then
+  exec 9>"$LOCK"
+  flock -w 30 9 || log "lock non ottenuto entro 30s, procedo comunque"
+fi
+
+if [ "$WANT" = upstream ]; then
+  systemctl start cntlm.service
+else
+  systemctl stop cntlm.service
+fi
+
+# tinyproxy si riavvia solo se la modalita' e' cambiata davvero: gli eventi di rete
+# sono frequenti (dhcp4-change...) e ogni restart interrompe le connessioni in corso.
+if [ "$WANT" != "$CURRENT" ] || ! systemctl is-active --quiet tinyproxy.service; then
+  systemctl restart tinyproxy.service
+  log "modalita' ${CURRENT:-?} -> $WANT ($REASON)"
+else
+  log "modalita' invariata: $WANT ($REASON)"
+fi

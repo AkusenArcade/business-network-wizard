@@ -1,0 +1,15 @@
+[package]
+name = "bnw-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+age = "0.12.1"
+base64 = "0.23.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+sha1 = "0.11.0"
+tar = "0.4.46"
+thiserror = "2.0.21"
+toml = "1.1.6"

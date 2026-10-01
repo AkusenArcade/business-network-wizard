@@ -1,0 +1,70 @@
+# Profilo aziendale di la macchina di esempio: dai file qui accanto deve uscire esattamente lo stesso
+# risultato (vedi README.md per le differenze motivate).
+
+[company]
+name = "Esempio"
+domain = "ESEMPIO"
+user_hint = "nome.cognome"
+
+[proxy]
+upstream = ["10.20.30.40:3128"]
+local_port = 8118
+cntlm_port = 3128
+browsers = ["firefox", "zen"]
+pac = "http://proxy.corp.esempio/proxy.pac"
+direct = [
+  "localhost",
+  "127.0.0.0/8",
+  "10.0.0.0/8",
+  "172.16.0.0/12",
+  "192.168.0.0/16",
+  ".corp.esempio",
+  ".esempioprod",
+  { host = "esempio.it", note = """
+esempio.it e' split-horizon: dall'interno risolve su 10.x e il proxy aziendale
+non lo raggiunge (504). Le regole per IP sopra non bastano: tinyproxy confronta
+l'hostname della richiesta, non l'indirizzo risolto.""" },
+  ".esempio.it",
+]
+
+[vpn]
+name = "Esempio"
+file = "vpn/Esempio.ovpn"
+full_tunnel = true
+
+[wifi]
+name = "Esempio-802.1X"
+ssid = "Esempio"
+eap = "peap"
+phase2 = "mschapv2"
+ca = "wifi/root-ca.pem"
+ca_sha1 = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD"
+domain_suffix_match = "dc1.corp.esempio"
+autoconnect = false
+
+[[share]]
+server = "fs1.corp.esempio"
+name = "ESEMPIO"
+mount = "/mnt/esempio"
+
+[[share]]
+server = "fs2.corp.esempio"
+name = "PROGETTI"
+mount = "/mnt/progetti"
+
+[[share]]
+server = "fs3.corp.esempio"
+name = "AreaClienti"
+mount = "/mnt/area-clienti"
+
+[[share]]
+server = "fs1.corp.esempio"
+name = "SCAMBIO"
+mount = "/mnt/scambio"
+
+[[printer]]
+name = "STAMPA_P1"
+uri = "ipp://stampante-p1.corp.esempio/ipp"
+description = "Multifunzione - Piano 1"
+location = "Esempio Piano 1"
+duplex = false

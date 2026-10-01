@@ -1,0 +1,12 @@
+[package]
+name = "bnw-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bnw-client = { path = "../bnw-client" }
+bnw-core = { path = "../bnw-core" }
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+rpassword = "7.5.4"
+serde_json = "1.0.151"

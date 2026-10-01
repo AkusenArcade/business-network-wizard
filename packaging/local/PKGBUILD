@@ -1,0 +1,54 @@
+# Maintainer: AkusenArcade <akudesyn@gmail.com>
+#
+# Compila dal repository locale, per lo sviluppo: makepkg -si da questa cartella.
+# Il PKGBUILD per AUR, con i sorgenti scaricati dal tag, è in ../aur.
+
+pkgname=business-network-wizard
+pkgver=0.7.0
+pkgrel=1
+pkgdesc="Configura e mantiene l'accesso alla rete aziendale: proxy NTLM, VPN, WiFi 802.1X, dischi di rete"
+arch=('x86_64')
+url="https://github.com/AkusenArcade/business-network-wizard"
+license=('GPL-3.0-or-later')
+depends=('gtk4' 'libadwaita' 'networkmanager' 'networkmanager-openvpn' 'openvpn' 'polkit'
+         'tinyproxy' 'cntlm' 'cifs-utils' 'cups' 'curl' 'pacman-contrib' 'expac')
+install=business-network-wizard.install
+makedepends=('cargo')
+options=('!lto')
+
+_repo() { realpath "$startdir/../.."; }
+
+prepare() {
+  cd "$(_repo)"
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$(_repo)"
+  export CARGO_TARGET_DIR="$srcdir/target"
+  cargo build --frozen --release --bin bnw --bin bnw-helper
+}
+
+check() {
+  cd "$(_repo)"
+  export CARGO_TARGET_DIR="$srcdir/target"
+  cargo test --frozen --release
+}
+
+package() {
+  local repo t="$srcdir/target/release"
+  repo="$(_repo)"
+  install -Dm755 "$t/bnw"                        "$pkgdir/usr/bin/bnw"
+  install -Dm755 "$t/bnw-helper"                 "$pkgdir/usr/lib/bnw/bnw-helper"
+  install -Dm755 "$repo/data/proxy-detect"       "$pkgdir/usr/lib/bnw/proxy-detect"
+  install -Dm755 "$repo/data/proxy-mode"         "$pkgdir/usr/bin/proxy-mode"
+  install -Dm755 "$repo/data/90-bnw-proxy"       "$pkgdir/usr/lib/NetworkManager/dispatcher.d/90-bnw-proxy"
+  install -Dm644 "$repo/data/bnw-proxy-detect.service" "$pkgdir/usr/lib/systemd/system/bnw-proxy-detect.service"
+  install -Dm644 "$repo/data/tinyproxy-bnw.conf" "$pkgdir/usr/lib/systemd/system/tinyproxy.service.d/bnw.conf"
+  install -Dm644 "$repo/data/cntlm-bnw.conf"     "$pkgdir/usr/lib/systemd/system/cntlm.service.d/bnw.conf"
+  install -Dm644 "$repo/data/it.akusen.bnw.policy" "$pkgdir/usr/share/polkit-1/actions/it.akusen.bnw.policy"
+  install -Dm644 "$repo/data/it.akusen.BusinessNetworkWizard.desktop" \
+                 "$pkgdir/usr/share/applications/it.akusen.BusinessNetworkWizard.desktop"
+  install -Dm644 "$repo/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$repo/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

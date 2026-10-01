@@ -1,0 +1,11 @@
+#
+# This file is parsed by pam_env module
+#
+# Syntax: simple "KEY=VAL" pairs on separate lines
+#
+http_proxy=http://127.0.0.1:8118
+https_proxy=http://127.0.0.1:8118
+HTTP_PROXY=http://127.0.0.1:8118
+HTTPS_PROXY=http://127.0.0.1:8118
+no_proxy=localhost,127.0.0.1,::1
+NO_PROXY=localhost,127.0.0.1,::1

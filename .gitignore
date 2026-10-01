@@ -1,0 +1,9 @@
+/target/
+*.bnw
+*.bak-*
+packaging/aur/src/
+packaging/aur/pkg/
+*.pkg.tar.zst
+packaging/local/src/
+packaging/local/pkg/
+CLAUDE.local.md

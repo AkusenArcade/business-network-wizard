@@ -1,0 +1,14 @@
+{
+  "policies": {
+    "Proxy": {
+      "Mode": "manual",
+      "HTTPProxy": "127.0.0.1:8118",
+      "SSLProxy": "127.0.0.1:8118",
+      "UseHTTPProxyForAllProtocols": true,
+      "Passthrough": "localhost, 127.0.0.1, ::1",
+      "AutoLogin": false,
+      "UseProxyForDNS": false,
+      "Locked": false
+    }
+  }
+}
