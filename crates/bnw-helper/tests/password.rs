@@ -591,3 +591,62 @@ fn macchina_nuova_cntlm_e_credenziali_da_zero() {
             .contains(&"/usr/bin/cntlm -H -c /dev/null -u nuovo.utente -d ESEMPIO")
     );
 }
+
+#[test]
+fn vpn_senza_utenza_la_prende_da_cntlm() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    esempio(root, true);
+    let vpn = read(root, VPN_KEYFILE).replace("username=mario.rossi\n", "");
+    put(root, VPN_KEYFILE, &vpn, 0o600);
+    let mut fake = Fake::new("200");
+    let r = set(root, &mut fake, vec![]);
+    assert!(!r.failed(), "{r:#?}");
+    let vpn = read(root, VPN_KEYFILE);
+    assert!(vpn.contains("username=mario.rossi"), "{vpn}");
+    assert!(vpn.contains(PW));
+}
+
+#[test]
+fn vpn_senza_utenza_da_nessuna_parte_lo_dice() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    esempio(root, true);
+    let vpn = read(root, VPN_KEYFILE).replace("username=mario.rossi\n", "");
+    put(root, VPN_KEYFILE, &vpn, 0o600);
+    // come dopo un import senza utenza: nessun file la conosce
+    fs::remove_file(root.join("etc/cntlm.conf")).unwrap();
+    fs::remove_file(root.join(CRED.trim_start_matches('/'))).unwrap();
+    let mut fake = Fake::new("200");
+    let r = set(root, &mut fake, vec![Place::Vpn]);
+    assert!(r.failed());
+    assert!(r.steps.iter().any(|s| s.what == "utenza della VPN" && s.outcome == Outcome::Failed));
+    // la password comunque è stata salvata
+    assert!(read(root, VPN_KEYFILE).contains(PW));
+}
+
+#[test]
+fn cntlm_conf_di_esempio_del_pacchetto_si_riscrive() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    esempio(root, true);
+    // come il file installato dal pacchetto cntlm: niente utenza, proxy d'esempio
+    put(
+        root,
+        "/etc/cntlm.conf",
+        "#Username\ttestuser\n#Domain\t\tcorp-uk\nProxy\t\t10.0.0.41:8080\nListen\t\t3128\n",
+        0o600,
+    );
+    let action = Action::SetPassword {
+        password: Secret::new(PW),
+        only: vec![Place::Cntlm],
+        domain_user: Some("mario.rossi".into()),
+    };
+    let mut fake = Fake::new("200");
+    let r = bnw_helper::run(&action, Fs::new(root, false), &mut fake);
+    assert!(!r.failed(), "{r:#?}");
+    let conf = read(root, "/etc/cntlm.conf");
+    assert!(conf.starts_with("Username        mario.rossi\nDomain          ESEMPIO\n"), "{conf}");
+    assert!(conf.contains("Proxy           10.20.30.40:3128\n"), "{conf}");
+    assert!(!conf.contains("10.0.0.41"), "{conf}");
+}

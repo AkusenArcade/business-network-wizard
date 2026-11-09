@@ -160,10 +160,6 @@ pub fn apply_action(b: &Bundle, domain_user: Option<String>) -> bnw_core::action
     }
 }
 
-/// Cosa resta da fare dopo l'importazione.
-pub const AFTER_IMPORT: &str = "Le password non sono nel profilo: aggiornale dalla pagina Password (o con \
-«bnw password»). Le stampanti che non rispondono si aggiungono rilanciando dalla rete aziendale.";
-
 /// Un profilo vuoto da compilare a mano.
 pub fn empty() -> Bundle {
     use bnw_core::profile::{Company, Proxy};

@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use bnw_client::bundle as cb;
+use bnw_core::action::{Action, NtlmCheck};
 use bnw_core::bundle::{Bundle, MIN_PASSPHRASE};
 use gtk::{gio, glib};
 
@@ -235,6 +236,14 @@ async fn ask_passphrase(app: &App, retry: bool) -> Option<String> {
 }
 
 async fn import_profile(app: Rc<App>) {
+    // Solo per le schermate: niente file né passphrase, il profilo applicato fa da .bnw.
+    if std::env::var_os("BNW_SCREENSHOT").is_some() {
+        let env = app.env.clone();
+        if let Ok(Some(b)) = gio::spawn_blocking(move || cb::from_installed(&env, &glib::home_dir())).await {
+            let _ = ask_credentials(&app, &b, &cb::summary(&b)).await;
+        }
+        return;
+    }
     let open = gtk::FileDialog::builder()
         .title("Importa un profilo aziendale")
         .filters(&bnw_filter())
@@ -271,17 +280,10 @@ async fn import_profile(app: Rc<App>) {
     for w in &warnings {
         body += &format!("\n⚠ {w}");
     }
-    body += &format!("\n\n{}", cb::AFTER_IMPORT);
-    let d = adw::AlertDialog::new(
-        Some(&format!("Profilo di {}", bundle.profile.company.name)),
-        Some(&body),
-    );
-    d.add_response("close", "Chiudi");
-    d.add_response("apply", "Applica il profilo");
-    d.set_response_appearance("apply", adw::ResponseAppearance::Suggested);
-    if d.choose_future(Some(&app.window)).await != "apply" {
+    let Some((user, password)) = ask_credentials(&app, &bundle, &body).await else {
         return;
-    }
+    };
+
     // una sola autorizzazione: polkit la tiene per qualche minuto
     let before = app
         .profile
@@ -289,14 +291,129 @@ async fn import_profile(app: Rc<App>) {
         .as_ref()
         .map(|p| p.shares.clone())
         .unwrap_or_default();
-    let Some(all) = app::run_helper(&app, &cb::apply_action(&bundle, None)).await else {
+    let Some(applied) = app::run_helper(&app, &cb::apply_action(&bundle, Some(user.clone()))).await else {
         return;
     };
     if let Err(e) = bnw_client::user::sync_bookmarks(&glib::home_dir(), &before, &bundle.profile.shares) {
         app::toast(&app, &format!("Segnalibri non aggiornati: {e}"));
     }
-    app::show_report(&app, "Profilo applicato", &all).await;
     app::refresh(&app);
+
+    // La password nei quattro posti. Se la prova preventiva la rifiuta (407) non è
+    // stato scritto niente: la si richiede.
+    let mut password = password;
+    let pw = loop {
+        let action = Action::SetPassword {
+            password: bnw_core::Secret::new(password),
+            only: Vec::new(),
+            domain_user: Some(user.clone()),
+        };
+        let Some(r) = app::run_helper(&app, &action).await else {
+            return;
+        };
+        if !r.rejected_before_writing() {
+            break r;
+        }
+        match crate::password_page::ask_password(&app, true).await {
+            Some(p) => password = p,
+            None => {
+                let mut text = app::report_text(&applied, true);
+                text += "\n\nLa password non è stata salvata: aggiornala dalla pagina Password.";
+                return app::show_message(&app, "Profilo applicato senza password", text.trim()).await;
+            }
+        }
+    };
+    app::refresh(&app);
+
+    let heading = match (applied.failed() || pw.failed(), pw.ntlm) {
+        (true, _) => "Configurazione incompleta: i passi con ✗ si possono ripetere",
+        (false, Some(NtlmCheck::Ok { .. })) => "Fatto: il proxy aziendale accetta la password",
+        (false, _) => "Profilo applicato",
+    };
+    let mut text = app::report_text(&applied, true);
+    text += "\n";
+    text += &app::report_text(&pw, true);
+    if !matches!(pw.ntlm, Some(NtlmCheck::Ok { .. })) {
+        text += "\n\nLa prova del proxy si farà sulla rete aziendale o in VPN.";
+    }
+    text += "\n\nApri una sessione nuova (o riavvia) perché le applicazioni vedano il proxy.";
+    app::show_message(&app, heading, text.trim()).await;
+}
+
+/// Riepilogo del profilo, utenza di dominio e password (due volte). «Applica» si
+/// abilita solo con un'utenza valida e due password uguali. Senza utenza la VPN non
+/// si connette e il WiFi non si crea: per questo si chiede qui, come nel wizard.
+async fn ask_credentials(app: &App, bundle: &Bundle, summary: &str) -> Option<(String, String)> {
+    let hint = bundle
+        .profile
+        .company
+        .user_hint
+        .clone()
+        .unwrap_or_else(|| "nome.cognome".into());
+    let user_row = adw::EntryRow::builder()
+        .title(format!("Utenza di dominio (es. {hint})"))
+        .build();
+    let p1 = adw::PasswordEntryRow::builder().title("Password di dominio").build();
+    let p2 = adw::PasswordEntryRow::builder().title("Ripetila").build();
+    let group = adw::PreferencesGroup::builder()
+        .description(
+            "La password va nel proxy, nella VPN, nel WiFi e nei dischi di rete. Prima di \
+             salvarla l'app la prova con il proxy aziendale, se è raggiungibile.",
+        )
+        .build();
+    group.add(&user_row);
+    group.add(&p1);
+    group.add(&p2);
+
+    let d = adw::AlertDialog::new(
+        Some(&format!("Profilo di {}", bundle.profile.company.name)),
+        Some(summary),
+    );
+    d.set_extra_child(Some(&group));
+    // il riepilogo è lungo: largo, i campi restano visibili senza scorrere
+    d.set_prefer_wide_layout(true);
+    d.add_response("close", "Annulla");
+    d.add_response("apply", "Applica il profilo");
+    d.set_response_appearance("apply", adw::ResponseAppearance::Suggested);
+    d.set_response_enabled("apply", false);
+    d.set_close_response("close");
+
+    let check = {
+        let (u, p1, p2, d) = (user_row.clone(), p1.clone(), p2.clone(), d.downgrade());
+        move || {
+            let Some(d) = d.upgrade() else { return };
+            let user_ok = bnw_core::validate::target(&bnw_core::Target {
+                domain_user: u.text().trim().to_string(),
+                uid: 0,
+                gid: 0,
+            })
+            .is_ok();
+            let (a, b) = (p1.text(), p2.text());
+            let pw_ok = !a.is_empty() && a == b && !a.contains(['\n', '\r']);
+            d.set_response_enabled("apply", user_ok && pw_ok);
+            if !b.is_empty() && a != b {
+                p2.add_css_class("error");
+            } else {
+                p2.remove_css_class("error");
+            }
+        }
+    };
+    for e in [
+        user_row.upcast_ref::<gtk::Editable>(),
+        p1.upcast_ref(),
+        p2.upcast_ref(),
+    ] {
+        let c = check.clone();
+        e.connect_changed(move |_| c());
+    }
+
+    let answer = d.choose_future(Some(&app.window)).await;
+    let user = user_row.text().trim().to_string();
+    let password = p1.text().to_string();
+    // i campi si svuotano subito: la password resta solo dove serve
+    p1.set_text("");
+    p2.set_text("");
+    (answer == "apply").then_some((user, password))
 }
 
 /// Il bundle per installare l'app su un PC senza internet non aziendale.

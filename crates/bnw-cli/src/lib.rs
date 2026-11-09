@@ -23,7 +23,7 @@ uso: bnw                         apre l'app
                                  esporta il profilo aziendale cifrato (VPN, WiFi,
                                  proxy, dischi, stampanti: niente password di dominio)
      bnw profile show FILE.bnw   mostra cosa contiene un profilo
-     bnw profile import FILE.bnw importa un profilo (proxy, VPN, WiFi, dischi, stampanti)
+     bnw profile import FILE.bnw importa un profilo e chiede utenza e password (come setup)
      bnw vpn up|down             connette o disconnette la VPN aziendale
      bnw vpn check               ricontrolla e corregge la connessione VPN
      bnw vpn import FILE.ovpn    reimporta la VPN da un .ovpn (la password resta)
@@ -614,18 +614,8 @@ fn cmd_import(env: &Env, file: &str) -> ExitCode {
         println!("Non ho applicato niente.");
         return ExitCode::SUCCESS;
     }
-    let mut code = ExitCode::SUCCESS;
-    let before = status::installed_profile(env)
-        .map(|p| p.shares)
-        .unwrap_or_default();
-    if cmd_helper(env, &bnw_client::bundle::apply_action(&b, None)) != ExitCode::SUCCESS {
-        code = ExitCode::FAILURE;
-    }
-    if let Some(home) = std::env::var_os("HOME") {
-        let _ = user::sync_bookmarks(Path::new(&home), &before, &b.profile.shares);
-    }
-    println!("\n{}", bnw_client::bundle::AFTER_IMPORT);
-    code
+    // Come «bnw setup»: utenza e password subito, così la macchina è pronta.
+    configure(env, &b)
 }
 
 /// Un'azione dell'helper costruita sul profilo applicato.
@@ -772,6 +762,12 @@ fn cmd_setup(env: &Env, file: &str) -> ExitCode {
         Ok(b) => b,
         Err(e) => return fail(&e),
     };
+    configure(env, &b)
+}
+
+/// Applica il profilo con l'utenza, poi scrive la password di dominio nei quattro posti.
+/// Serve all'import come alla prima configurazione: senza utenza la VPN non si connette.
+fn configure(env: &Env, b: &bnw_core::bundle::Bundle) -> ExitCode {
     let hint = b
         .profile
         .company
@@ -794,7 +790,7 @@ fn cmd_setup(env: &Env, file: &str) -> ExitCode {
     let before = status::installed_profile(env)
         .map(|p| p.shares)
         .unwrap_or_default();
-    if cmd_helper(env, &bnw_client::bundle::apply_action(&b, Some(user.clone()))) != ExitCode::SUCCESS {
+    if cmd_helper(env, &bnw_client::bundle::apply_action(b, Some(user.clone()))) != ExitCode::SUCCESS {
         println!("Alcuni passi non sono riusciti: li vedi sopra con ✗. Si può rilanciare.");
     }
     if let Some(home) = std::env::var_os("HOME") {

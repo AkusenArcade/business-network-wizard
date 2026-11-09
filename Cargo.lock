@@ -321,7 +321,7 @@ dependencies = [
 
 [[package]]
 name = "bnw"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "bnw-cli",
  "bnw-client",
@@ -334,7 +334,7 @@ dependencies = [
 
 [[package]]
 name = "bnw-cli"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "bnw-client",
  "bnw-core",
@@ -345,7 +345,7 @@ dependencies = [
 
 [[package]]
 name = "bnw-client"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "bnw-core",
  "chrono",
@@ -359,7 +359,7 @@ dependencies = [
 
 [[package]]
 name = "bnw-core"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "age",
  "base64 0.23.1",
@@ -373,7 +373,7 @@ dependencies = [
 
 [[package]]
 name = "bnw-helper"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "bnw-core",
  "chrono",

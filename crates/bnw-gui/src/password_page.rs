@@ -296,7 +296,7 @@ async fn cancelled(app: &Rc<App>) {
 
 /// Due campi password; «Aggiorna» si abilita solo quando coincidono. `retry`: la
 /// password precedente è stata rifiutata dalla prova.
-async fn ask_password(app: &App, retry: bool) -> Option<String> {
+pub(crate) async fn ask_password(app: &App, retry: bool) -> Option<String> {
     let first = adw::PasswordEntryRow::builder().title("Password nuova").build();
     let second = adw::PasswordEntryRow::builder().title("Ripetila").build();
     let group = adw::PreferencesGroup::new();

@@ -322,6 +322,9 @@ pub fn set(ctx: &mut Ctx, password: &Secret, only: &[Place], domain_user: Option
             cntlm_ok = write_hashes(ctx, &profile, &user, &hashes);
         }
     }
+    // L'utenza per la VPN: quella data o, dopo cntlm, quella scritta nei file. Senza
+    // `username` NetworkManager chiede le credenziali a un secret agent e la VPN non sale.
+    let vpn_user = user.clone().or_else(|| user_from_files(ctx, &profile));
     let mut nm_changed = false;
     for (place, name, section) in [
         (
@@ -336,7 +339,8 @@ pub fn set(ctx: &mut Ctx, password: &Secret, only: &[Place], domain_user: Option
         ),
     ] {
         if let (true, Some(name)) = (places.contains(&place), name) {
-            nm_changed |= write_nm_secret(ctx, place, &name, section, password) == NmWrite::Keyfile;
+            nm_changed |= write_nm_secret(ctx, place, &name, section, password, vpn_user.as_deref())
+                == NmWrite::Keyfile;
         }
     }
     if nm_changed {
@@ -468,7 +472,7 @@ fn trial(ctx: &mut Ctx, profile: &Profile, user: &str, hashes: &cntlm::NtlmHashe
 }
 
 /// Hash nuovi in `cntlm.conf`, riscrivendo solo le righe `Pass*`; se il file non c'è
-/// (macchina nuova) lo si scrive intero dal profilo.
+/// o non ha un'utenza (macchina nuova) lo si scrive intero dal profilo.
 fn write_hashes(ctx: &mut Ctx, profile: &Profile, user: &str, hashes: &cntlm::NtlmHashes) -> bool {
     let old = match ctx.fs.read(CNTLM_CONF) {
         Ok(Some(t)) => t,
@@ -479,10 +483,15 @@ fn write_hashes(ctx: &mut Ctx, profile: &Profile, user: &str, hashes: &cntlm::Nt
             return false;
         }
     };
-    let new = if old.is_empty() {
-        cntlm::cntlm_conf(profile, user, hashes)
-    } else {
+    // Senza riga Username il file non è una configurazione vera (di solito è l'esempio
+    // installato dal pacchetto cntlm): si scrive intero dal profilo.
+    let configured = old
+        .lines()
+        .any(|l| l.split_whitespace().next() == Some("Username"));
+    let new = if configured {
         cntlm::replace_hashes(&old, hashes)
+    } else {
+        cntlm::cntlm_conf(profile, user, hashes)
     };
     let ok = ctx.file(CNTLM_CONF, ctx.fs.write(CNTLM_CONF, &new, 0o600)) != Outcome::Failed;
     tag(ctx, Place::Cntlm);
@@ -502,7 +511,14 @@ enum NmWrite {
 /// Il segreto della VPN o del WiFi, più `password-flags=0`: NetworkManager lo legge
 /// dal proprio archivio invece di chiederlo a un secret agent (su niri non ce n'è).
 /// Via D-Bus; senza NetworkManager (--root) direttamente nel keyfile.
-fn write_nm_secret(ctx: &mut Ctx, place: Place, name: &str, section: &str, password: &Secret) -> NmWrite {
+fn write_nm_secret(
+    ctx: &mut Ctx,
+    place: Place,
+    name: &str,
+    section: &str,
+    password: &Secret,
+    user: Option<&str>,
+) -> NmWrite {
     let conn = match ctx.nm.find(name) {
         Ok(Some(c)) => c,
         Ok(None) => {
@@ -511,7 +527,7 @@ fn write_nm_secret(ctx: &mut Ctx, place: Place, name: &str, section: &str, passw
             return NmWrite::Failed;
         }
         Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {
-            return if write_keyfile_secret(ctx, place, name, section, password) {
+            return if write_keyfile_secret(ctx, place, name, section, password, user) {
                 NmWrite::Keyfile
             } else {
                 NmWrite::Failed
@@ -524,7 +540,8 @@ fn write_nm_secret(ctx: &mut Ctx, place: Place, name: &str, section: &str, passw
         }
     };
     let mut settings = conn.settings;
-    let mut detail = None;
+    let mut notes: Vec<String> = Vec::new();
+    let mut no_user = false;
     let fixed_flags = "password-flags portato a 0 (prima la chiedeva a un secret agent)".to_string();
     if place == Place::Vpn {
         let mut secrets = ctx
@@ -535,10 +552,24 @@ fn write_nm_secret(ctx: &mut Ctx, place: Place, name: &str, section: &str, passw
         secrets.insert("password".into(), password.expose().to_string());
         nm::set(&mut settings, "vpn", "secrets", nm::value(secrets));
         let mut data = nm::get_dict(&settings, "vpn", "data");
+        let mut data_changed = false;
         if data.get("password-flags").map(String::as_str) != Some("0") {
             data.insert("password-flags".into(), "0".into());
+            notes.push(fixed_flags);
+            data_changed = true;
+        }
+        if data.get("username").is_none_or(|u| u.trim().is_empty()) {
+            match user {
+                Some(u) => {
+                    data.insert("username".into(), u.into());
+                    notes.push(format!("utenza {u} (mancava)"));
+                    data_changed = true;
+                }
+                None => no_user = true,
+            }
+        }
+        if data_changed {
             nm::set(&mut settings, "vpn", "data", nm::value(data));
-            detail = Some(fixed_flags);
         }
     } else {
         nm::set(
@@ -549,9 +580,10 @@ fn write_nm_secret(ctx: &mut Ctx, place: Place, name: &str, section: &str, passw
         );
         if nm::get_u32(&settings, "802-1x", "password-flags").unwrap_or(0) != 0 {
             nm::set(&mut settings, "802-1x", "password-flags", nm::value(0u32));
-            detail = Some(fixed_flags);
+            notes.push(fixed_flags);
         }
     }
+    let detail = (!notes.is_empty()).then(|| notes.join(", "));
     if let Some(f) = &conn.filename {
         let _ = ctx.fs.backup_copy(f, crate::NM_BACKUP_DIR);
     }
@@ -563,6 +595,9 @@ fn write_nm_secret(ctx: &mut Ctx, place: Place, name: &str, section: &str, passw
         Ok(()) => {
             ctx.report.push(what, Outcome::Changed, detail);
             tag(ctx, place);
+            if no_user {
+                missing_vpn_user(ctx);
+            }
             NmWrite::Dbus
         }
         Err(e) => {
@@ -574,7 +609,14 @@ fn write_nm_secret(ctx: &mut Ctx, place: Place, name: &str, section: &str, passw
 }
 
 /// Il segreto direttamente nel keyfile (ripiego senza NetworkManager).
-fn write_keyfile_secret(ctx: &mut Ctx, place: Place, name: &str, section: &str, password: &Secret) -> bool {
+fn write_keyfile_secret(
+    ctx: &mut Ctx,
+    place: Place,
+    name: &str,
+    section: &str,
+    password: &Secret,
+    user: Option<&str>,
+) -> bool {
     let (path, text) = match find_keyfile(ctx, name) {
         Ok(Some(found)) => found,
         Ok(None) => {
@@ -590,11 +632,22 @@ fn write_keyfile_secret(ctx: &mut Ctx, place: Place, name: &str, section: &str, 
     };
     let flags_section = if place == Place::Vpn { "vpn" } else { "802-1x" };
     let mut new = keyfile::set(&text, section, "password", password.expose());
-    let mut detail = None;
+    let mut notes: Vec<String> = Vec::new();
+    let mut no_user = false;
     if keyfile::get(&new, flags_section, "password-flags").is_some_and(|f| f.trim() != "0") {
         new = keyfile::set(&new, flags_section, "password-flags", "0");
-        detail = Some("password-flags portato a 0 (prima la chiedeva a un secret agent)".to_string());
+        notes.push("password-flags portato a 0 (prima la chiedeva a un secret agent)".to_string());
     }
+    if place == Place::Vpn && keyfile::get(&new, "vpn", "username").is_none_or(|u| u.trim().is_empty()) {
+        match user {
+            Some(u) => {
+                new = keyfile::set(&new, "vpn", "username", u);
+                notes.push(format!("utenza {u} (mancava)"));
+            }
+            None => no_user = true,
+        }
+    }
+    let detail = (!notes.is_empty()).then(|| notes.join(", "));
     let result = ctx
         .fs
         .write_backup_in(&path, &new, 0o600, Some(crate::NM_BACKUP_DIR));
@@ -605,7 +658,21 @@ fn write_keyfile_secret(ctx: &mut Ctx, place: Place, name: &str, section: &str, 
             s.detail = detail;
         }
     }
+    if ok && no_user {
+        missing_vpn_user(ctx);
+    }
     ok
+}
+
+/// La password è salvata, ma la connessione VPN non ha l'utenza e nessun file la
+/// conosce: senza, la VPN non si connette.
+fn missing_vpn_user(ctx: &mut Ctx) {
+    ctx.fail(
+        "utenza della VPN",
+        "la connessione non ha l'utenza di dominio e non la trovo altrove: la VPN non si \
+         connetterebbe. Rifai la configurazione dal wizard indicando l'utenza.",
+    );
+    tag(ctx, Place::Vpn);
 }
 
 /// Il kernel cifs non accetta hash: la password sta in chiaro, `600 root` in una
